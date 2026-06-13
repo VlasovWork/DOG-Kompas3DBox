@@ -5,6 +5,7 @@ import pythoncom
 from win32com.client import Dispatch, gencache
 from pathlib import Path
 import os
+import gc
 
 pythoncom.CoInitialize()
 
@@ -139,14 +140,20 @@ def convert_to_dxf(models_data):
 
         iDocument2D.ksSaveToDXF(file_path)
         
+    try:
+        application.Quit()
+    except:
+        pass   
+       
         # Сначала пытаемся закрыть КОМПАС стандартным методом API
     try:
         kompas.Quit()
     except:
         pass
 
-    # ЖЕСТКОЕ ЗАКРЫТИЕ ПРОЦЕССА В ДИСПЕТЧЕРЕ ЗАДАЧ
-    # Эта команда мгновенно уничтожит зависший фоновый KOMPAS.exe,
-    # не вызывая никаких ошибок в Python и не показывая окон.
+    gc.collect()
+
     os.system("taskkill /f /im KOMPAS.exe")
+
+    
 

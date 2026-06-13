@@ -112,6 +112,8 @@ class MainWindow(QWidget):
         prepared_data = []
         for row in range(row_count):
             file_path = self.table_widget.item(row, 0).text()
+            if not file_path or not os.path.exists(file_path):
+                continue
             
             count_widget = self.table_widget.cellWidget(row, 1)
             file_count = int(count_widget.text()) if count_widget.text() else 1
