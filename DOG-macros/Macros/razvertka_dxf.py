@@ -26,17 +26,18 @@ def clean_part_name(raw_name: str) -> str:
     """ Очищает наименование детали от скрытых кодов форматирования КОМПАС """
     if not raw_name:
         return "Деталь"
+        
     # Оставляем только нормальные символы: буквы, цифры, дефисы и пробелы
     text = raw_name.replace('$', '').strip()
+    
     text = re.sub(r'[^а-яА-ЯёЁa-zA-Z0-9\s\-]', '', text)
-    # Убираем возможный мусорный хвост из латинских букв в конце (типа eddf)
+    
     text = re.sub(r'\s+[a-z]{4,}$', '', text).strip()
     return text
 
 
 def convert_to_dxf(models_data):
-    # Используем ИСКЛЮЧИТЕЛЬНО DispatchEx, чтобы запустить ОТДЕЛЬНЫЙ фоновый процесс
-    # Теперь ваш рабочий КОМПАС скрипт вообще никак не увидит и не тронет
+    # Используем DispatchEx, чтобы запустить ОТДЕЛЬНЫЙ фоновый процесс
     kompas = DispatchEx("Kompas.Application.7")
     kompas.Visible = False
 
@@ -110,8 +111,6 @@ def convert_to_dxf(models_data):
                 iSheetMetalContainer = kompas_api7_module.ISheetMetalContainer(iPart7)
                 
 
-
-
                 # Получаем листовое тело
                 iSheetMetalBodies = iSheetMetalContainer.SheetMetalBodies
                 SheetMetalBody = iSheetMetalBodies.SheetMetalBody(0)
@@ -119,11 +118,6 @@ def convert_to_dxf(models_data):
                 # Получаем толщину листа (в миллиметрах)
                 Part_thickness = SheetMetalBody.Thickness
                 
-                
-
-
-
-
 
 
                 # Считываем свойства
@@ -132,7 +126,7 @@ def convert_to_dxf(models_data):
                 Part_marking = top_part.Marking
                 
             finally:
-                # 1 — это константа kdDoNotSaveChanges. Модель закроется мгновенно без окон.
+                # 1 — константа kdDoNotSaveChanges. Модель закроется мгновенно без окон.
                 doc.Close(1)
         else:
             kompas_document.Close(1)
@@ -161,12 +155,10 @@ def convert_to_dxf(models_data):
         if active_doc_api5:
             active_doc_api5.ksSetDocOptions(1, 0) # 1, 0 = принудительный сброс статуса изменений
 
-        # Молча закрываем чертеж (1 = kdDoNotSaveChanges)
+        # закрываем чертеж (1 = kdDoNotSaveChanges)
         kompas_document.Close(1)
         
-        # Сдвигаем логику закрытия самого КОМПАСа за пределы цикла! 
-        # В вашем старом коде application.Quit() стоял прямо ВНУТРИ цикла for, 
-        # из-за чего процесс падал на втором файле.
+        
 
     # Закрываем исключительно НАШ созданный фоновый КОМПАС после завершения цикла
     try:
