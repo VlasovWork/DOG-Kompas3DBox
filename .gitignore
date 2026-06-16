@@ -8,7 +8,6 @@ venv/
 .vscode/
 
 build/
-dist/
 
 *.log
 

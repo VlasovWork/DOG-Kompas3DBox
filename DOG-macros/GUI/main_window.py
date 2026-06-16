@@ -1,4 +1,5 @@
 import sys
+import os
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton, 
     QFileDialog, QLabel, QTableWidget, QTableWidgetItem, 
@@ -8,6 +9,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 
 sys.path.append(r"C:\Users\vlasovpi\Desktop\DOG-Kompas3DBox\DOG-macros")
+
+def resource_path(relative_path):
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
 
 from Macros.razvertka_dxf import convert_to_dxf
 
@@ -73,7 +79,8 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setWindowIcon(QIcon(r"C:\Users\vlasovpi\Desktop\DOG-Kompas3DBox\DOG-macros\GUI\icons\icon.ico"))
+        self.setWindowIcon(QIcon(resource_path(r"C:\Users\vlasovpi\Desktop\DOG-Kompas3DBox\DOG-macros\GUI\icons\icon.ico")))
+
         self.setWindowTitle("Kompas DXF Converter")
         self.setMinimumSize(700, 450)
 

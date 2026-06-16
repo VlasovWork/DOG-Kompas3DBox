@@ -2,73 +2,73 @@
 #|razvertka_kompas
 
 import pythoncom
-from win32com.client import Dispatch, gencache
-from pathlib import Path
+# импортируем DispatchEx для изоляции процессов
+from win32com.client import Dispatch, DispatchEx, gencache
+import re
 import os
 import gc
 
 pythoncom.CoInitialize()
 
 def clean_material_name(raw_material: str) -> str:
-    """
-    Универсально вырезает чистую марку стали из строки КОМПАС-3D.
-    
-    Примеры работы:
-    - 'Лист$d1 ГОСТ 19904-90;08Х18Н10 ГОСТ 5582-75$' -> '08Х18Н10'
-    - 'Сталь 10 ГОСТ 1050-2013'                     -> 'Сталь 10'
-    - 'Ст3'                                         -> 'Ст3'
-    - 'Лист$d2;Сталь 20$'                           -> 'Сталь 20'
-    """
+    """ Универсально вырезает чистую марку стали из строки КОМПАС-3D. """
     if not raw_material:
         return "Неизвестный_материал"
-    
-    # Шаг 1: Очищаем строку от знаков доллара $, которые КОМПАС использует для форматирования текста
     text = raw_material.replace('$', '').strip()
-    
-    # Шаг 2: Если есть точка с запятой (сложный сортамент), берем только то, что ПОСЛЕ нее
     if ';' in text:
         text = text.split(';')[-1].strip()
-        
     if 'ГОСТ' in text:
         text = text.split('ГОСТ')[0].strip()
-        
+    text = text.rstrip(' -_')
     return text if text else "Неизвестный_материал"
 
-
+def clean_part_name(raw_name: str) -> str:
+    """ Очищает наименование детали от скрытых кодов форматирования КОМПАС """
+    if not raw_name:
+        return "Деталь"
+    # Оставляем только нормальные символы: буквы, цифры, дефисы и пробелы
+    text = raw_name.replace('$', '').strip()
+    text = re.sub(r'[^а-яА-ЯёЁa-zA-Z0-9\s\-]', '', text)
+    # Убираем возможный мусорный хвост из латинских букв в конце (типа eddf)
+    text = re.sub(r'\s+[a-z]{4,}$', '', text).strip()
+    return text
 
 
 def convert_to_dxf(models_data):
-    # API7
-    kompas = Dispatch("Kompas.Application.7")
-
-    # Делаем компас фоновым
+    # Используем ИСКЛЮЧИТЕЛЬНО DispatchEx, чтобы запустить ОТДЕЛЬНЫЙ фоновый процесс
+    # Теперь ваш рабочий КОМПАС скрипт вообще никак не увидит и не тронет
+    kompas = DispatchEx("Kompas.Application.7")
     kompas.Visible = False
 
-    #  Подключим константы API Компас
+    # Подключим константы API Компас
     kompas6_constants = gencache.EnsureModule("{75C9F5D0-B5B8-4526-8681-9903C567D2ED}", 0, 1, 0).constants
     kompas6_constants_3d = gencache.EnsureModule("{2CAF168C-7961-4B90-9DA2-701419BEEFE3}", 0, 1, 0).constants
 
-    #  Подключим описание интерфейсов API5
+    # Подключим описание интерфейсов API5 через DispatchEx для полной изоляции
     kompas6_api5_module = gencache.EnsureModule("{0422828C-F174-495E-AC5D-D31014DBBE87}", 0, 1, 0)
-    kompas_object = kompas6_api5_module.KompasObject(Dispatch("Kompas.Application.5")._oleobj_.QueryInterface(kompas6_api5_module.KompasObject.CLSID, pythoncom.IID_IDispatch))
+    kompas_object = kompas6_api5_module.KompasObject(
+        DispatchEx("Kompas.Application.5")._oleobj_.QueryInterface(kompas6_api5_module.KompasObject.CLSID, pythoncom.IID_IDispatch)
+    )
 
-
-    #  Подключим описание интерфейсов API7
+    # Подключим описание интерфейсов API7 к изолированному процессу
     kompas_api7_module = gencache.EnsureModule("{69AC2981-37C0-4379-84FD-5DD2F3C0A520}", 0, 1, 0)
-    application = kompas_api7_module.IApplication(Dispatch("Kompas.Application.7")._oleobj_.QueryInterface(kompas_api7_module.IApplication.CLSID, pythoncom.IID_IDispatch))
+    application = kompas_api7_module.IApplication(
+        kompas._oleobj_.QueryInterface(kompas_api7_module.IApplication.CLSID, pythoncom.IID_IDispatch)
+    )
 
-    # Выключаем все высплывающие окна
+    # Выключаем абсолютно все всплывающие окна внутри фонового процесса
     application.HideMessage = 2
 
     for model_path, amount, bending in models_data:
-        
-        #  Создаем новый документ
-        Documents = application.Documents
-        kompas_document = Documents.AddWithDefaultSettings(kompas6_constants.ksDocumentDrawing, True)
+        if not os.path.exists(model_path):
+            print(f"Файл не найден: {model_path}")
+            continue
 
+        # Создаем новый документ чертежа скрыто
+        Documents = application.Documents
+        kompas_document = Documents.AddWithDefaultSettings(kompas6_constants.ksDocumentDrawing, False) # False = скрыть чертеж
         kompas_document_2d = kompas_api7_module.IKompasDocument2D(kompas_document)
         iDocument2D = kompas_object.ActiveDocument2D()
-
 
         # Меняем оформление
         layout_sheets = kompas_document.LayoutSheets
@@ -96,64 +96,83 @@ def convert_to_dxf(models_data):
 
         iViewDesignation = kompas_api7_module.IViewDesignation(view)
         iViewDesignation.ShowUnfold = False
-
         rc = view.Update()
 
-        # Нейминг файла развертки
-        doc = application.Documents.Open(model_path)
-        doc_3d = kompas_api7_module.IKompasDocument3D(doc)
-        top_part = doc_3d.TopPart
+        # Открываем 3D-модель по её имени параметров, скрыто и только для чтения
+        doc = application.Documents.Open(PathName=model_path, Visible=False, ReadOnly=True)
         
         if doc:
             try:
-                # Инициализируем интерфейс 3D-документа
                 doc_3d = kompas_api7_module.IKompasDocument3D(doc)
                 top_part = doc_3d.TopPart
-        
+                
+                iPart7 = kompas_api7_module.IPart7(top_part)
+                iSheetMetalContainer = kompas_api7_module.ISheetMetalContainer(iPart7)
+                
+
+
+
+                # Получаем листовое тело
+                iSheetMetalBodies = iSheetMetalContainer.SheetMetalBodies
+                SheetMetalBody = iSheetMetalBodies.SheetMetalBody(0)
+                                 
+                # Получаем толщину листа (в миллиметрах)
+                Part_thickness = SheetMetalBody.Thickness
+                
+                
+
+
+
+
+
+
                 # Считываем свойства
                 Part_name = top_part.Name
                 Part_material = top_part.Material
                 Part_marking = top_part.Marking
+                
             finally:
-                # Этот блок выполнится ВСЕГДА, даже если чтение свойств упадет с ошибкой.
-                # Это гарантирует, что КОМПАС не зависнет в памяти.
-                doc.Close(False)
+                # 1 — это константа kdDoNotSaveChanges. Модель закроется мгновенно без окон.
+                doc.Close(1)
         else:
-            # Если документ не открылся, переходим к следующему файлу в цикле
+            kompas_document.Close(1)
             continue
 
+        Part_material = clean_material_name(Part_material)
+        Part_name = clean_part_name(Part_name)
 
-        Part_material = clean_material_name(Part_material)    
-
-        # Очистка имени и материала от запрещенных в Windows символов (/, \, *, ?, :, <, >, |, ")
-        # Если в названии материала будет строка вроде "Сталь 3 ГОСТ...", двоеточие сломает сохранение!
+        # Очистка имени и материала от запрещенных символов
         for char in r'/\:*?"<>|':
             Part_name = Part_name.replace(char, "_")
             Part_material = Part_material.replace(char, "_")
             Part_marking = Part_marking.replace(char, "_")
 
-        # 3. Формируем путь
+        # Формируем путь
         folder_path = os.path.dirname(model_path)
         bend_text = "Гибка" if bending else ""
-        new_filename = f"{Part_marking}-{Part_name}_{Part_material}_{amount}шт_{bend_text}.dxf"
+        new_filename = f"{Part_marking} - {Part_name}_{Part_material}_S{Part_thickness}мм_{amount}шт_{bend_text}.dxf"
         file_path = os.path.join(folder_path, new_filename)    
 
+        # Сохраняем в DXF
         iDocument2D.ksSaveToDXF(file_path)
         
-    try:
-        application.Quit()
-    except:
-        pass   
-       
-        # Сначала пытаемся закрыть КОМПАС стандартным методом API
+        # Сбрасываем флаг изменений чертежа через API5, чтобы КОМПАС не считал его модифицированным
+        active_doc_api5 = kompas_object.ActiveDocument2D()
+        if active_doc_api5:
+            active_doc_api5.ksSetDocOptions(1, 0) # 1, 0 = принудительный сброс статуса изменений
+
+        # Молча закрываем чертеж (1 = kdDoNotSaveChanges)
+        kompas_document.Close(1)
+        
+        # Сдвигаем логику закрытия самого КОМПАСа за пределы цикла! 
+        # В вашем старом коде application.Quit() стоял прямо ВНУТРИ цикла for, 
+        # из-за чего процесс падал на втором файле.
+
+    # Закрываем исключительно НАШ созданный фоновый КОМПАС после завершения цикла
     try:
         kompas.Quit()
     except:
         pass
-
+        
     gc.collect()
-
-    os.system("taskkill /f /im KOMPAS.exe")
-
-    
 
